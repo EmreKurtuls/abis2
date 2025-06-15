@@ -3,13 +3,13 @@ import datetime
 import math
 import time
 from pymavlink import mavutil
-
+import threading
 
 class Submarine:
 
     vehicle = None
     somenumberforme = 0
-    _channels = {1: 1500, 2: 1500, 3: 1500, 4: 1500, 5: 1500, 6: 1500}
+    _channels = [1500] * 8
 
     class rawimu:
         xacc = 0
@@ -46,7 +46,7 @@ class Submarine:
         vz = 0
         hdg = 0
 
-    class scalePressure:
+    class scalePressure2:
         press_abs = 0
         press_diff = 0
         temperature = 0
@@ -70,6 +70,9 @@ class Submarine:
         velx = 0
 
     def __init__(self, Usb="COM4", ip="127.0.0.1", port=5760):
+        self._is_rc_override_active = False
+        self._rc_override_thread = None
+        self._is_message_listener_active = False
         try:
             if Usb:
                 print(f"Connecting to vehicle at {Usb}")
@@ -80,10 +83,105 @@ class Submarine:
             print("Waiting for vehicle heartbeat")
             self.vehicle.wait_heartbeat()
             print("Successfully connected to vehicle")
+            self.mav = self.vehicle.mav
+            self.target_system = self.vehicle.target_system
+            self.target_component = self.vehicle.target_component
+
+            self._start_rc_override()
+            self._start_message_listener()
+
         except Exception as e:
             print("Error: ", e)
             self.vehicle = None
             return
+
+    def _message_listener_worker(self):
+        print("Message listener thread started.")
+        while self._is_message_listener_active:
+            try:
+                msg = self.vehicle.recv_match(blocking=True, timeout=1)
+                if msg is None:
+                    continue
+                
+                msg_type = msg.get_type()
+                
+                if msg_type == 'ATTITUDE':
+                    self.attitudeListener(msg)
+                elif msg_type == 'GLOBAL_POSITION_INT':
+                    self.globalPositionListener(msg)
+                elif msg_type == 'LOCAL_POSITION_NED':
+                    self.localPositionListener(msg)
+                elif msg_type == 'SCALED_PRESSURE2':
+                    self.scalePressureListener(msg)
+
+            except Exception as e:
+                print(f"Message listener error: {e}")
+                self._is_message_listener_active = False
+                break
+        print("Message listener thread stopped.")
+
+    def _start_message_listener(self):
+        if self.vehicle and not self._is_message_listener_active:
+            self._is_message_listener_active = True
+            self._message_listener_thread = threading.Thread(target=self._message_listener_worker, daemon=True)
+            self._message_listener_thread.start()
+
+
+    def _rc_override_worker(self):
+        while self._is_rc_override_active:
+            try:
+                self.vehicle.mav.rc_channels_override_send(
+                    self.vehicle.target_system,
+                    self.vehicle.target_component,
+                    *self._channels 
+                )
+                time.sleep(1 / 20)
+            except Exception as e:
+                print(f"RC override worker error: {e}")
+                self._is_rc_override_active = False
+                break
+        print("RC Override thread stopped.")
+
+
+    def _start_rc_override(self):
+        if self.vehicle and not self._is_rc_override_active:
+            self._channels = [1500, 1500, 1500, 1500, 1500, 1500, 0, 0] 
+            self._is_rc_override_active = True
+            self._rc_override_thread = threading.Thread(target=self._rc_override_worker, daemon=True)
+            self._rc_override_thread.start()
+            print("RC Override thread started.")
+
+    def close(self):
+        print("Closing vehicle connection...")
+
+        if self._is_message_listener_active:
+            self._is_message_listener_active = False
+            if hasattr(self, '_message_listener_thread'):
+                self._message_listener_thread.join(timeout=1)
+
+        if self._is_rc_override_active:
+            self._is_rc_override_active = False
+            if self._rc_override_thread:
+                self._rc_override_thread.join(timeout=1)
+
+        if self.vehicle and self.vehicle.port.is_open:
+            try:
+                self.relinquish_control()
+                self.disarm()
+            except Exception as e:
+                print(f"Could not send disarm command during close: {e}")
+
+        if self.vehicle:
+            self.vehicle.close()
+
+        print("Connection closed.")
+
+
+    def relinquish_control(self):
+        print("Relinquishing RC control...")
+        self._channels = [0] * 8
+        time.sleep(0.5)
+
 
     def setVehicleModeTo(self, modeName: str, Force=False):
         if self.vehicle is not None:
@@ -142,8 +240,6 @@ class Submarine:
         self.rotation.pitch = math.degrees(msg.pitch)
         self.rotation.roll = math.degrees(msg.roll)
         self.rotation.yaw = math.degrees(msg.yaw)
-        velx = self.vehicle.velocity
-        self.test_speed.velx = velx
 
     def rawImuListener(self, msg):
         self.rawimu.xacc = msg.xacc
@@ -165,31 +261,49 @@ class Submarine:
         self.localPosition.vz = msg.vz
 
     def globalPositionListener(self, msg):
-        self.globalPosition.x = msg.x
-        self.globalPosition.y = msg.y
-        self.globalPosition.z = msg.z
+        self.globalPosition.time_boot_ms = msg.time_boot_ms
+        self.globalPosition.lat = msg.lat  # .x yerine .lat
+        self.globalPosition.lon = msg.lon  # .y yerine .lon
+        self.globalPosition.alt = msg.alt  # .z yerine .alt
+        # İrtifa kontrolü için en önemli veri:
+        self.globalPosition.relative_alt = msg.relative_alt / 1000.0  # milimetreden metreye çevir
         self.globalPosition.vx = msg.vx
         self.globalPosition.vy = msg.vy
         self.globalPosition.vz = msg.vz
+        self.globalPosition.hdg = msg.hdg
 
     def scalePressureListener(self, msg):
-        self.scalePressure.press_abs = msg.press_abs
-        self.scalePressure.press_diff = msg.press_diff
-        self.scalePressure.temperature = msg.temperature
+        self.scalePressure2.press_abs = msg.press_abs
+        self.scalePressure2.press_diff = msg.press_diff
+        self.scalePressure2.temperature = msg.temperature
 
     def arm(self):
-        if self.vehicle is not None:
-            self.vehicle.arducopter_arm()
-            self.vehicle.motors_armed_wait()
+        self.mav.command_long_send(
+            self.target_system, self.target_component,
+            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            0, 1, 0, 0, 0, 0, 0, 0
+        )
+        ack = self.vehicle.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+        if ack and ack.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+            print("Araç arm edildi.")
+            # self.motors_armed_wait() 
+            print("Motorlar aktif.")
+            return True
         else:
-            print("Not Connected")
+            print("arm başarısız!")
+            return False
 
     def disarm(self):
-        if self.vehicle is not None:
-            self.vehicle.arducopter_disarm()
-            self.vehicle.motors_disarmed_wait()
+        self.mav.command_long_send(
+            self.target_system, self.target_component,
+            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            0, 0, 0, 0, 0, 0, 0, 0
+        )
+        ack = self.vehicle.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+        if ack and ack.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+            print("Araç disarm edildi.")
         else:
-            print("Not Connected")
+            print("disarm başarısız.")
 
     @property
     def mode(self) -> str:
@@ -217,78 +331,44 @@ class Submarine:
             return None
 
 
-    def _send_rc_override(self):
-        # Send RC override to the Pixhawk for all channels
-        self.vehicle.mav.rc_channels_override_send(
-            self.vehicle.target_system,
-            self.vehicle.target_component,
-            self._channels[1],  # Channel 1
-            self._channels[2],  # Channel 2
-            self._channels[3],  # Channel 3
-            self._channels[4],  # Channel 4
-            self._channels[5],
-            self._channels[6],
-            0, 0, 0  # Other channels (if any)
-        )
-
-    def Channel1(self):
-        return self._channels[1]
-
-    
-    def Channel1(self, val):
-        # Ensure the value is within valid PWM range
-        self._channels[1] = int(min(max(val, 1100), 1900))  # Clamp between 1000 and 2000
-        self._send_rc_override()
-        print(f"Channel 1 set to {val}")
+    def relinquish_control(self):
+        print("Tüm kanallarda kontrol Pixhawk'a devrediliyor...")
+        channels = [0] * 8
+        for _ in range(int(10)):
+            self.mav.rc_channels_override_send(
+                self.target_system, self.target_component, *channels
+            )
+            time.sleep(1 / 10)
 
     @property
-    def Channel2(self):
-        return self._channels[2]
+    def Channel1(self): return self._channels[0]
+    @Channel1.setter
+    def Channel1(self, val): self._channels[0] = int(min(max(val, 1100), 1900))
 
+    @property
+    def Channel2(self): return self._channels[1]
     @Channel2.setter
-    def Channel2(self, val):
-        self._channels[2] = int(min(max(val, 1100), 1900))  # Clamp between 1000 and 2000
-        self._send_rc_override()
-        print(f"Channel 2 set to {val}")
-
+    def Channel2(self, val): self._channels[1] = int(min(max(val, 1100), 1900))
+    
     @property
-    def Channel3(self):
-        return self._channels[3]
-
+    def Channel3(self): return self._channels[2]
     @Channel3.setter
-    def Channel3(self, val):
-        self._channels[3] = int(min(max(val, 1100), 1900))  # Clamp between 1000 and 2000
-        self._send_rc_override()
-        print(f"Channel 3 set to {val}")
+    def Channel3(self, val): self._channels[2] = int(min(max(val, 1100), 1900))
 
     @property
-    def Channel4(self):
-        return self._channels[4]
-
+    def Channel4(self): return self._channels[3]
     @Channel4.setter
-    def Channel4(self, val):
-        self._channels[4] = int(min(max(val, 1100), 1900))  # Clamp between 1000 and 2000
-        self._send_rc_override()
-        print(f"Channel 4 set to {val}")
+    def Channel4(self, val): self._channels[3] = int(min(max(val, 1100), 1900))
 
     @property
-    def Channel5(self):
-        return self._channels[5]
+    def Channel5(self): return self._channels[4]
     @Channel5.setter
-    def Channel5(self, val):
-        self._channels[5] = int(min(max(val, 1100), 1900))  # Clamp between 1000 and 2000
-        self._send_rc_override()
-        print(f"Channel 5 set to {val}")
+    def Channel5(self, val): self._channels[4] = int(min(max(val, 1100), 1900))
 
     @property
-    def Channel6(self):
-        return self._channels[6]
-
+    def Channel6(self): return self._channels[5]
     @Channel6.setter
-    def Channel6(self, val):
-        self._channels[6] = int(min(max(val, 1100), 1900))  # Clamp between 1000 and 2000
-        self._send_rc_override()
-        print(f"Channel 6 set to {val}")
+    def Channel6(self, val): self._channels[5] = int(min(max(val, 1100), 1900))
 
     def setPWM(self, channel, pwm):
         if self.vehicle is not None:
@@ -337,12 +417,12 @@ class Submarine:
 
 
 if __name__ == "__main__":
-    veh = Submarine(Usb="/dev/ttyACM0")  # Modify USB port as needed for your setup
+    veh = Submarine(Usb="/dev/cu.usbmodem11101")  # Modify USB port as needed for your setup
     prev = veh.rotation.yaw
     veh.arm()
     veh.setVehicleModeTo("manual")
 
-    alt = veh.globalPosition.alt
+    alt = veh.scalePressure2.press_abs
 
     print('alt: ', alt)
 
@@ -354,3 +434,4 @@ if __name__ == "__main__":
             print("yaw: ", now)
             prev = now
     '''
+

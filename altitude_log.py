@@ -5,7 +5,7 @@ import os
 
 def setup_csv_logger(filename=None):
     
-    filename = 'AbisRepo2025/altitude_log3.csv'
+    filename = 'altitude_log3.csv'
     
     fieldnames = ['Relative_Alt_m', 'Pressure_Pa']
     
