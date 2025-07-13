@@ -7,7 +7,10 @@ from queue import Queue
 import csv
 import signal
 import datetime
+import cv2
 
+
+stop_threads = False
 
 
 class PIDController:
@@ -64,7 +67,7 @@ class Autonomous:
         self.targetRoll = 0
         self.targetYaw = 0
         self.targetThrottle = 1500  # Neutral position
-        self.targetPressure = 1150 #convert from pascal to cm/m
+        self.targetPressure = 1125 #convert from pascal to cm/m
         self.target_alt = 300
 
 
@@ -94,7 +97,7 @@ class Autonomous:
             dt = current_time - old_time
             error = self.targetPitch - self.vehicle.rotation.pitch
             output = self.pid_pitch.update(error, dt)
-            self.vehicle.Channel1 = 1500 - min(400, max(-400, output))
+            self.vehicle.Channel1 = 1500 + min(400, max(-400, output))
             self.is_pitch_stable = abs(error) < 3
             print(f"Pitch -> Error: {error}, Output: {output}, Pitch: {self.vehicle.rotation.pitch}")
             old_time = current_time
@@ -326,6 +329,47 @@ class Autonomous:
         time.sleep(0.1)
 
 
+def camera_worker(camera_index=0, output_filename="kayit.avi"):
+
+    global stop_threads
+    cap = cv2.VideoCapture(camera_index)
+
+    if not cap.isOpened():
+        print(f"Hata: Kamera {camera_index} açılamadı.")
+        return
+
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = 20
+
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+
+    out = cv2.VideoWriter(output_filename, fourcc, fps, (frame_width, frame_height))
+
+    print(f"Kamera akışı başlatıldı. Görüntü '{output_filename}' dosyasına kaydediliyor.")
+    print("Pencereyi kapatmak için 'q' tuşuna basın.")
+
+    while not stop_threads:
+        ret, frame = cap.read()
+        if not ret:
+            print("Hata: Kameradan görüntü alınamadı.")
+            break
+
+        out.write(frame)
+
+        cv2.imshow('Kamera Akışı', frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            stop_threads = True
+            break
+
+    print("Kamera ve kayıt nesneleri serbest bırakılıyor...")
+    cap.release()
+    out.release()  # -
+    cv2.destroyAllWindows()
+    print("Kamera akışı durduruldu.")
+
+
 def stopVehicle(auto, seconds):
     auto.stayIdle()
     time.sleep(seconds)
@@ -396,7 +440,10 @@ def main():
 
 
 def testStability():
+    global stop_threads
+    stop_threads = False
     rov = None
+    camera_thread = None
     
     try:
         rov = Submarine('/dev/ttyACM0')
@@ -411,8 +458,8 @@ def testStability():
 
         print("araç arm edildi")
 
-        pid_pitch = PIDController(kp=1.5, ki=0.4, kd=0.05, windup_guard=20, ramp_rate=5, filter_coefficient=0.5) #1.5
-        pid_roll = PIDController(kp=3, ki=0.4, kd=0.03, windup_guard=15, ramp_rate=5, filter_coefficient=0.5)
+        pid_pitch = PIDController(kp=15, ki=0.4, kd=0.05, windup_guard=20, ramp_rate=5, filter_coefficient=0.5) #1.5
+        pid_roll = PIDController(kp=15, ki=0.4, kd=0.03, windup_guard=15, ramp_rate=5, filter_coefficient=0.5)
         pid_altitude = PIDController(kp=2, ki=0.4, kd=0.05, windup_guard=30, ramp_rate=5, filter_coefficient=0.5)
         pid_yaw = PIDController(kp=10, ki=0.4, kd=0.1, windup_guard=15, ramp_rate=5, filter_coefficient=0.5)
         # pid_throttle = PIDController(kp=2, ki=0.3, kd=0.1, windup_guard=20, ramp_rate=5, filter_coefficient=0.5)
@@ -421,38 +468,62 @@ def testStability():
         auto.initialization()
         print("Initialization complete!")    
 
-        time.sleep(60)
+        time.sleep(1)
         print("Stabilizasyon thread'leri başlatılıyor...")
 
         pitch_thread = threading.Thread(target=auto.stablePitch, daemon=True)
-        roll_thread = threading.Thread(target=auto.stableRoll, daemon=True)
+        #roll_thread = threading.Thread(target=auto.stableRoll, daemon=True)
         altitude_thread = threading.Thread(target=auto.stableAltitude, daemon=True)
 
         pitch_thread.start()
-        roll_thread.start()
+        #roll_thread.start()
         altitude_thread.start()
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_filename = f"kayit_{timestamp}.avi"
+
+        #camera_thread = threading.Thread(target=camera_worker, args=(0, video_filename), daemon=True)
+        #camera_thread.start()
 
         print("stabilizasyon aktif")
         time.sleep(2)
+        while not stop_threads:
+            #auto.stableYaw(target_yaw=143)
+            #time.sleep(5)
+            auto.moveForward(intended_time=45, signal_multiplier=400)
+            #print("İleri hareket tamamlandı.")
+            time.sleep(5)
+            auto.moveBackward(intended_time=45, signal_multiplier=400)
+            #auto.stableYaw(target_yaw=323)
+            #time.sleep(3)
+            #time.sleep(3)
 
-        auto.moveForward(intended_time=15, signal_multiplier=400)
-        print("İleri hareket tamamlandı.")
-        time.sleep(2)
-        
-        print("\n0 dereceye geri dönülüyor...")
-        auto.stableYaw(target_yaw=0)
-        print("Dönüş tamamlandı.")
+            #auto.moveBackward(intended_time=10, signal_multiplier=200)
+            #time.sleep(5)
+            #time.sleep(5)
+            #auto.stableYaw(target_yaw=0)
 
-        time.sleep(60)
+            #time.sleep(5)
+            #auto.stableYaw(target_yaw=90)
+            #time.sleep(5)
+            #auto.stableYaw(target_yaw=45)
+            time.sleep(10)
+            
 
     except KeyboardInterrupt:
         print("Stabilization interrupted by user.")
+        stop_threads = True
     except Exception as e:
         print(f"Error: {e}")
+        stop_threads = True
     finally:
+        print("Temizlik yapılıyor ve program sonlandırılıyor...")
+        if camera_thread and camera_thread.is_alive():
+            camera_thread.join(timeout=2)
         if rov:
-            print("Araç durduruluyor ve bağlantı kapatılıyor...")
-            rov.close()   # Bu yeni metodumuz, her şeyi halledecek.
+            rov.close()
+        cv2.destroyAllWindows()
+
         print("Test tamamlandı.")
 
     #print(f"Stabilization test completed in {end - start:.2f} seconds.")

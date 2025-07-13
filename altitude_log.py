@@ -68,13 +68,13 @@ def main():
             
         # Initialize data dictionary
         data = {
-            'Relative_Alt_m': None,
-            'Pressure_Pa': None
+            'press_abs': None
+            
         }
             
         # Get the latest altitude message
         msg = sub.recv_match(
-            type=['GLOBAL_POSITION_INT'],
+            type=['SCALE_PRESSURE2'],
             blocking=True,
             timeout=1
         )
@@ -85,8 +85,8 @@ def main():
             
             print('msg: ', msg)
             
-            data['Relative_Alt_m'] = rel_alt
-            data['Pressure_Pa'] = alt_pascal
+            data['press_abs'] = press_abs
+            #data['Pressure_Pa'] = alt_pascal
                 
             # print(f"Relative Alt: {rel_alt:.2f}m")
             # print(f'Pascal: {alt_pascal:.2f} Pa')
