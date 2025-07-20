@@ -67,7 +67,7 @@ class Autonomous:
         self.targetRoll = 0
         self.targetYaw = 0
         self.targetThrottle = 1500  # Neutral position
-        self.targetPressure = 1125 #convert from pascal to cm/m
+        self.targetPressure = 1125 #convert from pascal to cm/m 1125 iyi değer
         self.target_alt = 300
 
 
@@ -126,13 +126,21 @@ class Autonomous:
         while True:
             time.sleep(0.1)
             current_time = time.time()
-            dt = current_time - old_time
-            error = self.vehicle.scalePressure2.press_abs - self.targetPressure
-            #error = self.vehicle.globalPosition.relative_alt - self.target_alt
-            output = self.pid_altitude.update(error, dt)
-            self.vehicle.Channel3 = 1500 + min(400, max(-400, output))
-            self.is_altitude_stable = abs(error) < 3
-            print(f"Altitude -> Error: {error}, Output: {output}, alt: {self.vehicle.globalPosition.relative_alt}")
+            current_roll = self.vehicle.rotation.roll
+            current_pitch = self.vehicle.rotation.pitch
+            current_pressure = self.vehicle.scalePressure2.press_abs
+            if abs(current_roll) > 45 or abs(current_pitch) > 45:
+                self.vehicle.Channel3 = 1500
+                print("Araç ters altitude durduruluyor.")
+            
+            else:
+                dt = current_time - old_time
+                error = self.vehicle.scalePressure2.press_abs - self.targetPressure
+                #error = self.vehicle.globalPosition.relative_alt - self.target_alt
+                output = self.pid_altitude.update(error, dt)
+                self.vehicle.Channel3 = 1500 + min(400, max(-400, output))
+                self.is_altitude_stable = abs(error) < 3
+                print(f"Altitude -> Error: {error}, Output: {output}, alt: {self.vehicle.globalPosition.relative_alt}")
             old_time = current_time
 
     def stableYaw(self, target_yaw=None):
@@ -173,6 +181,31 @@ class Autonomous:
             print(
                 f"Yaw -> Target: {self.targetYaw}, Error: {error}, Output: {output}, Yaw: {self.vehicle.rotation.yaw}")
             old_time = current_time
+
+    def stableYaw_continuous(self):
+        old_time = time.time()
+        while not stop_threads:
+            current_time = time.time()
+            dt = current_time - old_time
+            if dt == 0: 
+                time.sleep(0.01)
+                continue
+
+            error = self.targetYaw - self.vehicle.rotation.yaw
+            if error > 180:
+                error -= 360
+            elif error < -180:
+                error += 360
+
+            output = self.pid_yaw.update(error, dt)
+            self.vehicle.Channel4 = 1500 + min(400, max(-400, int(output)))
+
+            self.is_yaw_stable = abs(error) < 3
+
+            print(f"Yaw -> Target: {self.targetYaw:.2f}, Current: {self.vehicle.rotation.yaw:.2f}, Error: {error:.2f}")
+            
+            old_time = current_time
+            time.sleep(0.1) 
 
     # def stableThrottle(self):
     #     old_time = time.time()
@@ -219,6 +252,12 @@ class Autonomous:
         self.vehicle.Channel5 = 1500 - signal_multiplier
         time.sleep(intended_time)
         self.vehicle.Channel5 = 1500
+        time.sleep(0.1)
+
+    def yanlama(self, intended_time, signal_multiplier):
+        self.vehicle.Channel6 = 1500 + signal_multiplier
+        time.sleep(intended_time)
+        self.vehicle.Channel6 = 1500
         time.sleep(0.1)
 
     def goForward(self, intended_time, speed_multiplier):
@@ -329,7 +368,7 @@ class Autonomous:
         time.sleep(0.1)
 
 
-def camera_worker(camera_index=0, output_filename="kayit.avi"):
+def camera_worker(camera_index=0, output_filename=None):
 
     global stop_threads
     cap = cv2.VideoCapture(camera_index)
@@ -342,8 +381,12 @@ def camera_worker(camera_index=0, output_filename="kayit.avi"):
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = 20
 
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    if output_filename is None:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"kayit_{timestamp}.mp4" 
 
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    
     out = cv2.VideoWriter(output_filename, fourcc, fps, (frame_width, frame_height))
 
     print(f"Kamera akışı başlatıldı. Görüntü '{output_filename}' dosyasına kaydediliyor.")
@@ -471,16 +514,22 @@ def testStability():
         time.sleep(1)
         print("Stabilizasyon thread'leri başlatılıyor...")
 
+        auto.targetYaw = auto.vehicle.rotation.yaw
+
+
         pitch_thread = threading.Thread(target=auto.stablePitch, daemon=True)
-        #roll_thread = threading.Thread(target=auto.stableRoll, daemon=True)
+        roll_thread = threading.Thread(target=auto.stableRoll, daemon=True)
         altitude_thread = threading.Thread(target=auto.stableAltitude, daemon=True)
+        yaw_thread = threading.Thread(target=auto.stableYaw_continuous, daemon=True)
+
 
         pitch_thread.start()
-        #roll_thread.start()
+        roll_thread.start()
         altitude_thread.start()
+        yaw_thread.start()
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        video_filename = f"kayit_{timestamp}.avi"
+        video_filename = f"kayit_{timestamp}.mp4"
 
         #camera_thread = threading.Thread(target=camera_worker, args=(0, video_filename), daemon=True)
         #camera_thread.start()
@@ -488,26 +537,18 @@ def testStability():
         print("stabilizasyon aktif")
         time.sleep(2)
         while not stop_threads:
-            #auto.stableYaw(target_yaw=143)
+            
+
+            
+            auto.moveForward(intended_time=60, signal_multiplier=400)
             #time.sleep(5)
-            auto.moveForward(intended_time=45, signal_multiplier=400)
-            #print("İleri hareket tamamlandı.")
+            #new_target_yaw = auto.targetYaw + 180
+            #if new_target_yaw >= 360:
+            #    new_target_yaw -= 360
+            #auto.targetYaw = new_target_yaw
+
+
             time.sleep(5)
-            auto.moveBackward(intended_time=45, signal_multiplier=400)
-            #auto.stableYaw(target_yaw=323)
-            #time.sleep(3)
-            #time.sleep(3)
-
-            #auto.moveBackward(intended_time=10, signal_multiplier=200)
-            #time.sleep(5)
-            #time.sleep(5)
-            #auto.stableYaw(target_yaw=0)
-
-            #time.sleep(5)
-            #auto.stableYaw(target_yaw=90)
-            #time.sleep(5)
-            #auto.stableYaw(target_yaw=45)
-            time.sleep(10)
             
 
     except KeyboardInterrupt:

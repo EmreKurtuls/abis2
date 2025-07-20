@@ -100,7 +100,7 @@ try:
     if arm_vehicle():
         time.sleep(1)
         
-        set_channel_pwm(2, 1900)
+        set_channel_pwm(4, 1900)
         time.sleep(90)
         reset_all_motors_to_idle()
 
