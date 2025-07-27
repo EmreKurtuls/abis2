@@ -151,7 +151,7 @@ class GPSNavigation:
                     time.sleep(1)  # Wait for heading adjustment
                 else:
                     # Move forward towards target
-                    speed = min(max_speed, max(100, int(distance_to_target * 2)))  # Adaptive speed
+                    speed = min(max_speed, max(100, int(distance_to_target * 50)))  # Adaptive speed
                     print(f"Moving forward with speed: {speed}")
                     self.auto.moveForward(intended_time=2, signal_multiplier=speed)
                     
