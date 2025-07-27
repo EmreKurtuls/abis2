@@ -207,18 +207,27 @@ class Autonomous:
     #    self.STOP()
 
     def moveForward(self, intended_time, signal_multiplier):
+        # Adjust signal_multiplier to be relative to 1500
+        if signal_multiplier > 1100 and signal_multiplier < 1900:
+            signal_multiplier = signal_multiplier - 1500
         self.vehicle.Channel5 = 1500 + signal_multiplier
         time.sleep(intended_time)
         self.vehicle.Channel5 = 1500
         time.sleep(0.1)
 
     def moveBackward(self, intended_time, signal_multiplier):
+        # Adjust signal_multiplier to be relative to 1500
+        if signal_multiplier > 1100 and signal_multiplier < 1900:
+            signal_multiplier = signal_multiplier - 1500
         self.vehicle.Channel5 = 1500 - signal_multiplier
         time.sleep(intended_time)
         self.vehicle.Channel5 = 1500
         time.sleep(0.1)
 
     def goForward(self, intended_time, speed_multiplier):
+        # Adjust speed_multiplier to be relative to 1500
+        if speed_multiplier > 1100 and speed_multiplier < 1900:
+            speed_multiplier = speed_multiplier - 1500
         start_time = time.time()
         print("Motors are starting...")
         self.vehicle.Channel5 = max(1500, min(2000, 1500 + speed_multiplier))
@@ -239,6 +248,9 @@ class Autonomous:
 
     def goBackward(self, intended_time, speed_multiplier):
         start_time = time.time()
+        # Adjust speed_multiplier to be relative to 1500
+        if speed_multiplier > 1100 and speed_multiplier < 1900:
+            speed_multiplier = speed_multiplier - 1500
         self.vehicle.Channel5 = max(1500, min(2000, 1500 - speed_multiplier))
         self.vehicle.Channel3 = 1500
         while time.time() - start_time < intended_time:
@@ -258,7 +270,7 @@ class Autonomous:
 
     def throttle(self, intended_time, signal_multiplier):
         self.vehicle.Channel2 = 1500
-
+        # Adjust signal_multiplier to be relative to 1500
         if signal_multiplier > 1100 and signal_multiplier < 1900:
             signal_multiplier = signal_multiplier - 1500
         self.vehicle.Channel4 = 1500 + signal_multiplier
@@ -285,6 +297,9 @@ class Autonomous:
         self.vehicle.Channel6 = 1500
 
     def goForwardWithInterrupt(self, signal_multiplier, going_forward_queue, still_going_forward_queue):
+        # Adjust signal_multiplier to be relative to 1500
+        if signal_multiplier > 1100 and signal_multiplier < 1900:
+            signal_multiplier = signal_multiplier - 1500
         self.vehicle.Channel5 = max(1000, min(2000, 1500 + 100 * signal_multiplier))
         while True:
             time.sleep(0.01)
@@ -318,6 +333,9 @@ class Autonomous:
 
     # pitch does not work here but yaw does. why!?
     def yaw(self, intended_time, signal_multiplier):
+        # Adjust signal_multiplier to be relative to 1500
+        if signal_multiplier > 1100 and signal_multiplier < 1900:
+            signal_multiplier = signal_multiplier - 1500
         self.vehicle.Channel6 = 1500
         self.vehicle.Channel2 = 1500 + signal_multiplier
         time.sleep(intended_time)
