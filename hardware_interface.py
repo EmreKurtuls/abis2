@@ -4,32 +4,22 @@ import threading
 
 
 class ArduinoLink:
-    """
-    Arduino ile seri iletişim kurar, gelen veri paketlerini okur,
-    ayrıştırır ve motor komutları gönderir.
-    """
-
     def __init__(self, port, baudrate=115200, timeout=1):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
         self.ser = None
-
         self.latest_state = None
         self.is_running = False
         self._lock = threading.Lock()
 
         try:
-            print(f"{self.port} portuna bağlanılıyor...")
             self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
             time.sleep(2)
-            print("Bağlantı başarılı.")
         except serial.SerialException as e:
-            print(f"HATA: Porta bağlanılamadı! - {e}")
             raise e
 
     def _read_loop(self):
-        """Bu fonksiyon arka plan thread'inde çalışarak verileri okur."""
         while self.is_running:
             if self.ser and self.ser.in_waiting > 0:
                 try:
@@ -42,10 +32,14 @@ class ArduinoLink:
 
                         if len(parts) == 4 and len(cal_values_str) == 4:
                             data = {
-                                'yaw': float(parts[0]), 'roll': float(parts[1]), 'pitch': float(parts[2]),
-                                'depth': float(parts[3]),
-                                'cal_sys': int(cal_values_str[0]), 'cal_gyro': int(cal_values_str[1]),
-                                'cal_accel': int(cal_values_str[2]), 'cal_mag': int(cal_values_str[3])
+                                'yaw': float(parts[0]),
+                                'roll': float(parts[1]),
+                                'pitch': float(parts[2]),
+                                'pressure': float(parts[3]),  # 'pressure' anahtarı burada oluşturuluyor
+                                'cal_sys': int(cal_values_str[0]),
+                                'cal_gyro': int(cal_values_str[1]),
+                                'cal_accel': int(cal_values_str[2]),
+                                'cal_mag': int(cal_values_str[3])
                             }
                             with self._lock:
                                 self.latest_state = data
@@ -54,7 +48,6 @@ class ArduinoLink:
             time.sleep(0.001)
 
     def start_reading(self):
-        """Okuma thread'ini başlatır."""
         if not self.is_running:
             self.is_running = True
             self.thread = threading.Thread(target=self._read_loop, daemon=True)
@@ -62,28 +55,18 @@ class ArduinoLink:
             print("Arduino okuma thread'i başlatıldı.")
 
     def get_latest_state(self):
-        """Ana döngünün en son veriyi alacağı fonksiyon."""
         with self._lock:
             return self.latest_state
 
     def send_motor_commands(self, motor_pwms):
-        """
-        Motor PWM değerlerini içeren bir listeyi alıp,
-        Arduino'nun anlayacağı tek bir string'e çevirir ve gönderir.
-        motor_pwms: [1500, 1650, 1480, ...] şeklinde bir liste olmalı.
-        """
         if self.ser and self.ser.is_open:
             try:
-                # Sayıları string'e çevir ve virgülle birleştir
                 command_string = "M:" + ",".join(map(str, motor_pwms)) + "\n"
-                # Arduino'ya gönder
                 self.ser.write(command_string.encode('utf-8'))
             except Exception as e:
                 print(f"Arduino'ya komut gönderirken hata: {e}")
 
-
     def close(self):
-        """Arka plan thread'ini ve seri portu güvenli bir şekilde kapatır."""
         self.is_running = False
         if hasattr(self, 'thread') and self.thread:
             self.thread.join()

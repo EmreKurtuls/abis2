@@ -1,32 +1,27 @@
-ARDUINO_PORT = '/dev/cu.usbserial-1110'
+ARDUINO_PORT = '/dev/cu.usbserial-130'
 BAUDRATE = 115200
 
-PITCH_KP = 15.0
-PITCH_KI = 0.4
-PITCH_KD = 0.05
-PITCH_WINDUP = 20
-PITCH_RAMP_RATE = 5
-PITCH_FILTER_COEFF = 0.5
+PITCH_KP = 1.0
+PITCH_KI = 0.1  # Çok küçük bir I değeri
+PITCH_KD = 0.0  # <-- D TERİMİNİ KAPATTIK
+
+PITCH_WINDUP = 10
 
 # Roll (Yuvarlanma)
-ROLL_KP = 15.0
-ROLL_KI = 0.4
-ROLL_KD = 0.03
-ROLL_WINDUP = 15
-ROLL_RAMP_RATE = 5
-ROLL_FILTER_COEFF = 0.5
+ROLL_KP = 1.0
+ROLL_KI = 0.1   # Çok küçük bir I değeri
+ROLL_KD = 0.0   # <-- D TERİMİNİ KAPATTIK
 
-# Yaw (Dönme)
-YAW_KP = 10.0
-YAW_KI = 0.4
-YAW_KD = 0.1
+ROLL_WINDUP = 10
+
+YAW_KP = 2.0   # Yaw için daha yumuşak bir başlangıç
+YAW_KI = 0.1   # Küçük hataları düzeltmesi için
+YAW_KD = 0.0   # Titremeyi önlemek için şimdilik kapalı
+
 YAW_WINDUP = 15
-YAW_RAMP_RATE = 5
-YAW_FILTER_COEFF = 0.5
 
-DEPTH_KP = 6.0
-DEPTH_KI = 0.6
-DEPTH_KD = 0.05
-DEPTH_WINDUP = 30
-DEPTH_RAMP_RATE = 5
-DEPTH_FILTER_COEFF = 0.5
+PRESSURE_KP = 0.1  # Basınç değerleri büyük olduğu için Kp küçük olmalı
+PRESSURE_KI = 0.02 # Küçük sapmaları düzeltmek için
+PRESSURE_KD = 0.0  # Titremeyi önlemek için şimdilik kapalı
+
+PRESSURE_WINDUP = 50
