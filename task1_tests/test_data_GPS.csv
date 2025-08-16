@@ -1,0 +1,16 @@
+case_id,description,lat1,lon1,lat2,lon2,expected_distance_m,expected_initial_bearing_deg
+A0,Identical points (zero distance),41.0082,28.9784,41.0082,28.9784,0.0,
+A1,Short east ~85 m in Istanbul,41.0082,28.9784,41.0082,28.9794,83.909,90.0
+A2,Short north ~111 m in Istanbul,41.0082,28.9784,41.0092,28.9784,111.195,0.0
+A3,Diagonal ~200 m in Istanbul,41.0082,28.9784,41.009,28.9796,134.357,48.54
+B1,About 1 km north,40.0,29.0,40.009,29.0,1000.754,0.0
+B2,About 1 km east at 40°N,40.0,29.0,40.0,29.0118,1005.127,89.996
+C1,Crossing the Prime Meridian (Greenwich),51.4779,-0.0015,51.4779,0.0015,207.762,89.999
+C2,Crossing the Equator,0.001,30.0,-0.001,30.0,222.39,180.0
+D1,"Near North Pole, 90° longitude change",89.9,0.0,89.9,90.0,15725.333,45.0
+E1,New York (JFK) → London (LHR),40.6413,-73.7781,51.47,-0.4543,5540011.318,51.353
+E2,Sydney → Tokyo,-33.8688,151.2093,35.6764,139.65,7825845.292,350.049
+F1,"Antipodal (0,0) → (0,180)",0.0,0.0,0.0,180.0,20015086.796,90.0
+G1,"Same longitude, +1° latitude",10.0,20.0,11.0,20.0,111194.927,0.0
+G2,"Same latitude, +1° longitude @10°N",10.0,20.0,10.0,21.0,109505.584,89.913
+H1,Random mid-distance,37.7749,-122.4194,34.0522,-118.2437,559120.577,136.503
