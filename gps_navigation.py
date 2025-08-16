@@ -1,10 +1,119 @@
 import math
 import time
 import threading
+import numpy as np
 from VehicleMav import Submarine
 from AbisTest import PIDController, Autonomous
 from experimental_utils.GPS_calculation import calculate_bearing
 from geopy.distance import geodesic
+
+class EKFNavigator:
+    def __init__(self):
+        # State vector: [lat, lon, velocity_north, velocity_east]
+        self.state = np.zeros(4)
+        
+        # Covariance matrix
+        self.P = np.eye(4) * 100
+        
+        # Process noise covariance
+        self.Q = np.array([
+            [0.001, 0, 0, 0],
+            [0, 0.001, 0, 0],
+            [0, 0, 0.1, 0],
+            [0, 0, 0, 0.1]
+        ])
+        
+        # GPS measurement noise covariance
+        self.R_gps = np.array([
+            [10, 0],
+            [0, 10]
+        ])
+        
+        # IMU measurement noise covariance
+        self.R_imu = np.array([
+            [0.5, 0],
+            [0, 0.5]
+        ])
+        
+        self.dt = 0.1  # Time step
+        
+    def predict(self, dt=None):
+        """Prediction step of EKF"""
+        if dt is None:
+            dt = self.dt
+            
+        # State transition matrix F
+        F = np.array([
+            [1, 0, dt, 0],
+            [0, 1, 0, dt],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+        
+        # Predict state
+        self.state = F @ self.state
+        
+        # Predict covariance
+        self.P = F @ self.P @ F.T + self.Q
+        
+    def update_gps(self, lat_measured, lon_measured):
+        """Update step with GPS measurement"""
+        # Measurement function (GPS measures position directly)
+        H = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0]
+        ])
+        
+        # Innovation
+        z = np.array([lat_measured, lon_measured])
+        y = z - H @ self.state
+        
+        # Innovation covariance
+        S = H @ self.P @ H.T + self.R_gps
+        
+        # Kalman gain
+        K = self.P @ H.T @ np.linalg.inv(S)
+        
+        # Update state and covariance
+        self.state = self.state + K @ y
+        self.P = (np.eye(4) - K @ H) @ self.P
+        
+    def update_imu(self, accel_north, accel_east, dt=None):
+        """Update step with IMU acceleration data"""
+        if dt is None:
+            dt = self.dt
+            
+        # Convert acceleration to velocity change
+        vel_north_change = accel_north * dt
+        vel_east_change = accel_east * dt
+        
+        # Measurement function for velocity
+        H = np.array([
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+        
+        # Innovation (predicted velocity vs measured velocity change)
+        z = np.array([self.state[2] + vel_north_change, self.state[3] + vel_east_change])
+        y = z - H @ self.state
+        
+        # Innovation covariance
+        S = H @ self.P @ H.T + self.R_imu
+        
+        # Kalman gain
+        K = self.P @ H.T @ np.linalg.inv(S)
+        
+        # Update state and covariance
+        self.state = self.state + K @ y
+        self.P = (np.eye(4) - K @ H) @ self.P
+        
+    def get_position(self):
+        """Get current estimated position"""
+        return self.state[0], self.state[1]
+        
+    def get_velocity(self):
+        """Get current estimated velocity"""
+        return self.state[2], self.state[3]
 
 class GPSNavigation:
     def __init__(self, vehicle, autonomous_controller):
@@ -23,6 +132,10 @@ class GPSNavigation:
         self.position_tolerance = 0.00001  # GPS coordinate tolerance (~1 meter)
         self.targetDirection_tolerance = 2  # degrees
         
+        # Initialize EKF
+        self.ekf = EKFNavigator()
+        self.last_update_time = time.time()
+        
     def parse_coordinates(self, coord_string):
         try:
             lat_str, lon_str = coord_string.split(', ')
@@ -37,17 +150,49 @@ class GPSNavigation:
         return distance
         
     def get_current_position(self):
-        current_lat, current_lon = self.parse_coordinates(self.current_coordinates)
-        return current_lat, current_lon
+        """Get current GPS position using EKF estimation"""
+        # In real scenario, get GPS from vehicle sensors
+        gps_lat = self.vehicle.globalPosition.lat / 1e7 if hasattr(self.vehicle, 'globalPosition') else None
+        gps_lon = self.vehicle.globalPosition.lon / 1e7 if hasattr(self.vehicle, 'globalPosition') else None
+        
+        current_time = time.time()
+        dt = current_time - self.last_update_time
+        
+        if gps_lat is not None and gps_lon is not None:
+            # Update EKF with GPS data
+            self.ekf.predict(dt)
+            self.ekf.update_gps(gps_lat, gps_lon)
+            
+            # Get IMU data for velocity estimation
+            if hasattr(self.vehicle, 'scaleImu'):
+                # Convert IMU accelerations to NED frame
+                accel_north = self.vehicle.scaleImu.xacc * math.cos(math.radians(self.vehicle.rotation.yaw)) - \
+                             self.vehicle.scaleImu.yacc * math.sin(math.radians(self.vehicle.rotation.yaw))
+                accel_east = self.vehicle.scaleImu.xacc * math.sin(math.radians(self.vehicle.rotation.yaw)) + \
+                            self.vehicle.scaleImu.yacc * math.cos(math.radians(self.vehicle.rotation.yaw))
+                
+                self.ekf.update_imu(accel_north, accel_east, dt)
+            
+            self.last_update_time = current_time
+            return self.ekf.get_position()
+        else:
+            # Fallback to hardcoded coordinates for simulation
+            return self.parse_coordinates(self.current_coordinates)
         
     def set_start_position(self, lat=None, lon=None, use_current=True):
         """Set starting position either manually or from hardcoded coordinates."""
         if use_current:  # Use hardcoded current coordinates
             self.start_lat, self.start_lon = self.get_current_position()
+            # Initialize EKF with starting position
+            self.ekf.state[0] = self.start_lat
+            self.ekf.state[1] = self.start_lon
             print(f"Start position set to current location: {self.start_lat:.6f}, {self.start_lon:.6f}")
         elif lat is not None and lon is not None:  # Parameter of function
             self.start_lat = lat
             self.start_lon = lon
+            # Initialize EKF with manual position
+            self.ekf.state[0] = self.start_lat
+            self.ekf.state[1] = self.start_lon
             print(f"Start position set manually: {self.start_lat:.6f}, {self.start_lon:.6f}")
         else:
             raise ValueError("Either use_current=True or provide lat/lon coordinates")
@@ -73,7 +218,7 @@ class GPSNavigation:
             print("Error: Start position not set!")
             return False
             
-        print("Starting GPS navigation...")
+        print("Starting GPS navigation with EKF...")
         print(f"From: {self.start_lat:.6f}, {self.start_lon:.6f}")
         print(f"To: {self.target_lat:.6f}, {self.target_lon:.6f}")
         
@@ -98,8 +243,9 @@ class GPSNavigation:
         
         try:
             while self.navigation_active and (time.time() - start_time) < navigation_timeout:
-                # Get current position (in real scenario, this would be from vehicle sensors)
+                # Get current position using EKF
                 current_lat, current_lon = self.get_current_position()
+                current_vel_north, current_vel_east = self.ekf.get_velocity()
                 
                 # Calculate distance to target using geopy
                 distance_to_target = self.calculate_distance(
@@ -107,7 +253,8 @@ class GPSNavigation:
                     self.target_lat, self.target_lon
                 )
                 
-                print(f"Current position: {current_lat:.6f}, {current_lon:.6f}")
+                print(f"EKF Position: {current_lat:.6f}, {current_lon:.6f}")
+                print(f"EKF Velocity: N={current_vel_north:.2f}, E={current_vel_east:.2f} m/s")
                 print(f"Distance to target: {distance_to_target:.2f} meters")
                 
                 # Check if we've reached the target
@@ -150,9 +297,19 @@ class GPSNavigation:
                     self.auto.stableYaw(target_yaw=new_target_yaw)
                     time.sleep(1)  # Wait for heading adjustment
                 else:
-                    # Move forward towards target
-                    speed = min(max_speed, max(100, int(distance_to_target * 50)))  # Adaptive speed
-                    print(f"Moving forward with speed: {speed}")
+                    # Use EKF-based adaptive speed control
+                    base_speed = min(max_speed, max(100, int(distance_to_target * 50)))
+                    
+                    # Adjust speed based on velocity estimation
+                    velocity_magnitude = math.sqrt(current_vel_north**2 + current_vel_east**2)
+                    if velocity_magnitude > 2.0:  # If moving too fast, reduce speed
+                        speed = max(100, base_speed * 0.7)
+                    elif velocity_magnitude < 0.5:  # If moving too slow, increase speed
+                        speed = min(max_speed, base_speed * 1.3)
+                    else:
+                        speed = base_speed
+                    
+                    print(f"EKF-adjusted speed: {speed} (base: {base_speed}, vel: {velocity_magnitude:.2f})")
                     self.auto.moveForward(intended_time=2, signal_multiplier=speed)
                     
                 time.sleep(0.5)  # Navigation update rate
